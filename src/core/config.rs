@@ -59,6 +59,9 @@ pub struct Config {
     /// Pre-approved yield destination wallet (base58 pubkey). Config-only;
     /// there is deliberately no way to pass this at runtime.
     pub yield_destination: Option<String>,
+    /// Secret used to sign invoice tickets (HMAC). Required for sweeps: a
+    /// sweep only runs against an invoice whose ticket this plugin issued.
+    pub invoice_secret: Option<String>,
     /// Max signatures scanned per reference / per daily-volume lookup.
     pub scan_limit: usize,
     /// Local timezone as UTC offset in hours. Default -3 (Brasília).
@@ -180,6 +183,7 @@ impl Config {
             max_sweep_pct,
             daily_sweep_cap: get(section, "daily_sweep_cap").unwrap_or("500").to_string(),
             yield_destination,
+            invoice_secret: get(section, "invoice_secret").map(str::to_string),
             scan_limit,
             utc_offset_hours,
             label: get(section, "label").unwrap_or("ClawPay").to_string(),

@@ -279,6 +279,9 @@ pub struct SweepParams<'a> {
     pub token: &'a TokenDef,
     pub pct: u8,
     pub now_unix: i64,
+    /// HMAC ticket issued by `create_invoice`; proves the lookup fields
+    /// describe an invoice this plugin created.
+    pub ticket: Option<&'a str>,
 }
 
 /// Prepare an UNSIGNED sweep transaction, all caps enforced fail-closed.
@@ -292,8 +295,9 @@ pub fn sweep_yield(
     cfg: &Config,
     p: &SweepParams,
 ) -> Result<Value, ClawErr> {
-    let destination = match (&cfg.yield_destination, cfg.max_sweep_pct) {
-        (Some(dest), pct_cap) if pct_cap > 0 => dest.clone(),
+    let (destination, secret) = match (&cfg.yield_destination, cfg.max_sweep_pct, &cfg.invoice_secret)
+    {
+        (Some(dest), pct_cap, Some(secret)) if pct_cap > 0 => (dest.clone(), secret.clone()),
         _ => return Err(ClawErr::sweep_disabled()),
     };
     if p.pct == 0 {
@@ -303,6 +307,23 @@ pub fn sweep_yield(
         return Err(ClawErr::sweep_pct_too_high(cfg.max_sweep_pct));
     }
     let recipient = cfg.recipient.clone().ok_or_else(ClawErr::no_recipient)?;
+
+    // The model relays lookup fields; the ticket proves they came from a
+    // create_invoice call of this plugin and were not altered.
+    let ticket = p
+        .ticket
+        .ok_or_else(|| ClawErr::invalid_args("`ticket` is required for sweep_yield"))?;
+    if !crate::core::ticket::verify(
+        &secret,
+        ticket,
+        p.reference,
+        &p.token.mint,
+        p.expected_base,
+        p.expires_at,
+        &recipient,
+    ) {
+        return Err(ClawErr::invalid_ticket());
+    }
 
     let ref_id = crate::core::invoice::reference_id(p.reference);
 

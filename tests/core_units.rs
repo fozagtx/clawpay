@@ -230,3 +230,33 @@ fn invalid_config_pubkeys_fail_closed() {
     section.insert("yield_destination".to_string(), "abc".to_string());
     assert!(Config::from_section(&section).is_err());
 }
+
+// ---------------------------------------------------------------- tickets
+
+#[test]
+fn hmac_sha256_matches_rfc4231_case_2() {
+    let mac = clawpay::core::ticket::hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+    assert_eq!(
+        mac.to_vec(),
+        hex_decode("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+    );
+}
+
+fn hex_decode(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn ticket_roundtrip_and_tamper_detection() {
+    use clawpay::core::ticket::{make, verify};
+    let t = make("s3cret", &common::reference(), common::USDC, 150_000_000, 1_785_603_600, &common::recipient());
+    assert!(verify("s3cret", &t, &common::reference(), common::USDC, 150_000_000, 1_785_603_600, &common::recipient()));
+    // any altered field fails
+    assert!(!verify("s3cret", &t, &common::reference(), common::USDC, 150_000_001, 1_785_603_600, &common::recipient()));
+    assert!(!verify("s3cret", &t, &common::reference(), common::USDC, 150_000_000, 1_785_603_601, &common::recipient()));
+    assert!(!verify("s3cret", &t, &common::destination(), common::USDC, 150_000_000, 1_785_603_600, &common::recipient()));
+    assert!(!verify("other", &t, &common::reference(), common::USDC, 150_000_000, 1_785_603_600, &common::recipient()));
+}

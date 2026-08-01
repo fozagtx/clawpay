@@ -30,6 +30,7 @@ struct Args {
     expires_at: Option<i64>,
     // sweep_yield
     pct: Option<u8>,
+    ticket: Option<String>,
     #[serde(rename = "__config", default)]
     config: HashMap<String, String>,
 }
@@ -189,7 +190,15 @@ fn sweep_yield(
     chain::sweep_yield(
         chain,
         cfg,
-        &SweepParams { reference, expected_base, expires_at, token, pct, now_unix },
+        &SweepParams {
+            reference,
+            expected_base,
+            expires_at,
+            token,
+            pct,
+            now_unix,
+            ticket: args.ticket.as_deref(),
+        },
     )
 }
 
@@ -242,6 +251,10 @@ pub fn parameters_schema() -> String {
                 "minimum": 1,
                 "maximum": 25,
                 "description": "sweep_yield: percentage of the received amount to move to the yield reserve. Hard-capped by operator config; requests above the cap are refused."
+            },
+            "ticket": {
+                "type": "string",
+                "description": "sweep_yield: the `ticket` value returned by create_invoice. Required; a sweep is refused unless the reference, amount and expiry match the invoice the ticket was issued for."
             }
         },
         "required": ["action"]

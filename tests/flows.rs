@@ -16,12 +16,19 @@ fn args(mut body: Value, config: &std::collections::HashMap<String, String>) -> 
     body.to_string()
 }
 
+const SECRET: &str = "test-invoice-secret-0123456789";
+
 fn sweep_config() -> std::collections::HashMap<String, String> {
     let mut cfg = base_config();
     cfg.insert("yield_destination".to_string(), destination());
     cfg.insert("max_sweep_pct".to_string(), "20".to_string());
     cfg.insert("daily_sweep_cap".to_string(), "500".to_string());
+    cfg.insert("invoice_secret".to_string(), SECRET.to_string());
     cfg
+}
+
+fn valid_ticket() -> String {
+    clawpay::core::ticket::make(SECRET, &reference(), USDC, 150_000_000, NOW + 3600, &recipient())
 }
 
 // ------------------------------------------------------------------ create
@@ -273,6 +280,7 @@ fn sweep_args(pct: u8) -> Value {
         "expected_amount": "150",
         "expires_at": NOW + 3600,
         "pct": pct,
+        "ticket": valid_ticket(),
     })
 }
 
@@ -581,4 +589,82 @@ fn yield_destination_equal_to_recipient_refused() {
     let result = run(&a, &no_chain(), ENTROPY, NOW);
     assert!(!result.success);
     assert_eq!(run_output(&result)["code"], "config_error");
+}
+
+
+// ---------------------------------------------------------- invoice tickets
+
+/// A ticket for different invoice fields (or garbage) must refuse the sweep.
+#[test]
+fn sweep_with_forged_or_mismatched_ticket_refused() {
+    let mut a: Value = sweep_args(10);
+    a["ticket"] = json!(clawpay::core::ticket::make(
+        SECRET, &reference(), USDC, 100_000_000, NOW + 3600, &recipient()
+    ));
+    let result = run(&args(a, &sweep_config()), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success, "ticket issued for 100 must not authorize a 150 sweep");
+    assert_eq!(run_output(&result)["code"], "invalid_ticket");
+
+    let mut a: Value = sweep_args(10);
+    a["ticket"] = json!("definitely-not-a-ticket");
+    let result = run(&args(a, &sweep_config()), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "invalid_ticket");
+}
+
+/// Without a ticket the sweep refuses before touching the chain.
+#[test]
+fn sweep_without_ticket_refused() {
+    let mut a: Value = sweep_args(10);
+    a.as_object_mut().unwrap().remove("ticket");
+    let result = run(&args(a, &sweep_config()), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "invalid_arguments");
+}
+
+/// Sweeps stay disabled when the operator has not configured a secret.
+#[test]
+fn sweep_without_secret_config_disabled() {
+    let mut cfg = sweep_config();
+    cfg.remove("invoice_secret");
+    let result = run(&args(sweep_args(10), &cfg), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "sweep_disabled");
+}
+
+/// The ticket returned by create_invoice authorizes the matching sweep.
+#[test]
+fn create_then_sweep_roundtrip_with_ticket() {
+    let cfg = sweep_config();
+    let created = run(
+        &args(json!({"action": "create_invoice", "amount": "150"}), &cfg),
+        &no_chain(),
+        [6u8; 32], // reference() == bs58([6; 32])
+        NOW,
+    );
+    assert!(created.success);
+    let out = run_output(&created);
+    assert_eq!(out["reference"], json!(reference()));
+    let ticket = out["ticket"].as_str().expect("ticket issued when secret configured").to_string();
+
+    let sweep = json!({
+        "action": "sweep_yield",
+        "reference": out["reference"],
+        "expected_amount": out["amount"],
+        "expires_at": out["expires_at"],
+        "pct": 10,
+        "ticket": ticket,
+    });
+    let chain = sweep_chain(None, 150_000_000, true);
+    let result = run(&args(sweep, &cfg), &chain, ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+    assert_eq!(run_output(&result)["status"], "sweep_ready");
+}
+
+/// No secret configured: create_invoice still works, just without a ticket.
+#[test]
+fn create_without_secret_has_no_ticket() {
+    let a = args(json!({"action": "create_invoice", "amount": "10"}), &base_config());
+    let out = run_output(&run(&a, &no_chain(), ENTROPY, NOW));
+    assert!(out["ticket"].is_null());
 }

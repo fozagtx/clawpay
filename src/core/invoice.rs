@@ -148,7 +148,20 @@ impl Invoice {
     pub fn to_output(&self, cfg: &Config) -> serde_json::Value {
         let amount_fmt = money::format_amount(self.amount_base, self.token.decimals);
         let valid_until = time::format_deadline_pt(self.expires_at, cfg.utc_offset_hours);
+        // The ticket binds this exact invoice to any later sweep; without a
+        // configured secret sweeps are disabled and no ticket is issued.
+        let ticket = cfg.invoice_secret.as_deref().map(|secret| {
+            crate::core::ticket::make(
+                secret,
+                &self.reference,
+                &self.token.mint,
+                self.amount_base,
+                self.expires_at,
+                &self.recipient,
+            )
+        });
         serde_json::json!({
+            "ticket": ticket,
             "status": "created",
             "reference": self.reference,
             "reference_id": self.reference_id,

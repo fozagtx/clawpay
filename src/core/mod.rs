@@ -12,5 +12,6 @@ pub mod invoice;
 pub mod money;
 pub mod msgs;
 pub mod payment;
+pub mod ticket;
 pub mod time;
 pub mod tx;

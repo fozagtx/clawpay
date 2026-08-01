@@ -113,8 +113,18 @@ impl ClawErr {
         Self::new(
             "sweep_disabled",
             "A reserva de rendimento não está ativada. \
-             Peça ao operador para configurar `max_sweep_pct` e `yield_destination`.",
-            "max_sweep_pct is 0 or yield_destination missing",
+             Peça ao operador para configurar `max_sweep_pct`, `yield_destination` \
+             e `invoice_secret`.",
+            "max_sweep_pct is 0, or yield_destination/invoice_secret missing",
+        )
+    }
+
+    pub fn invalid_ticket() -> Self {
+        Self::new(
+            "invalid_ticket",
+            "Esses dados não conferem com nenhuma cobrança emitida por mim, \
+             então não vou preparar a reserva. Confira a referência e o valor da cobrança.",
+            "ticket HMAC does not match the presented invoice fields",
         )
     }
 

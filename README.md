@@ -88,7 +88,7 @@ Every limit is enforced **inside the plugin**, from operator config plus on-chai
 - **Sweep only after confirmed payment**: the sweep re-verifies the invoice on-chain and sizes itself from the chain-verified received amount, never from what the model claims.
 - **Yield destination is config-only**: there is deliberately no runtime parameter for it. Same for the receiving wallet: invoice `recipient` overrides are rejected unless the operator explicitly enables them, so a prompt-injected agent cannot redirect money.
 - The model-facing schema never exposes `__config`; the ZeroClaw host additionally strips any caller-supplied `__config` before injection.
-- **The caps, not the invoice reference, are the enforcement boundary.** The `reference` argument scopes which credits a sweep looks at, but a stateless plugin cannot bind one sweep to one invoice; the percentage ceiling, the chain-verified daily cap and the config-locked destination are what bound funds movement. Because the daily cap only counts transactions already confirmed on-chain, prepare and sign one sweep at a time.
+- **Sweeps only run against invoices this plugin issued.** `create_invoice` returns a `ticket`, an HMAC over the invoice fields signed with the operator-only `invoice_secret`; `sweep_yield` refuses unless the presented reference, amount and expiry recompute to the same ticket. The percentage ceiling, the chain-verified daily cap and the config-locked destination remain the outer envelope. Because the daily cap only counts transactions already confirmed on-chain, prepare and sign one sweep at a time.
 
 ## Install
 
@@ -109,6 +109,7 @@ zeroclaw config set plugins.entries.clawpay.config.rpc_url "https://api.mainnet-
 # optional micro-savings:
 zeroclaw config set plugins.entries.clawpay.config.yield_destination "<yield wallet pubkey>"
 zeroclaw config set plugins.entries.clawpay.config.max_sweep_pct "15"
+zeroclaw config set plugins.entries.clawpay.config.invoice_secret "<long random string>"
 ```
 
 ## Configuration
@@ -126,6 +127,7 @@ All keys are optional except that **without `recipient` invoice creation refuses
 | `max_sweep_pct` | `0` (disabled) | Operator ceiling for sweeps; clamped to a hard 25%. |
 | `daily_sweep_cap` | `500` | Absolute daily sweep cap, token units. |
 | `yield_destination` | (none) | Pre-approved yield wallet. Sweeps refuse without it. Its token account must exist. |
+| `invoice_secret` | (none) | Signs invoice tickets (HMAC). Sweeps refuse without it. Use a long random string. |
 | `allow_recipient_override` | `false` | Allow `create_invoice` to take a per-call recipient. Leave off. |
 | `scan_limit` | `20` | Max signatures scanned per lookup (hard cap 100, bounds fuel use on small hosts). |
 | `utc_offset_hours` | `-3` | Local timezone for "today" caps and message timestamps (Brasília). |
@@ -137,9 +139,9 @@ For **devnet**, set `rpc_url` to `https://api.devnet.solana.com` and `allowed_to
 
 One tool, `clawpay`, with an `action` parameter (ZeroClaw tool plugins export exactly one tool per component):
 
-- `create_invoice`: `amount` (accepts `150`, `150,50`, `1.234,56`), optional `token`, `description`, `expiry_minutes`. Returns the Solana Pay URL (`url` / `qr_content`), the `reference` pubkey, a human `reference_id` (`CP-XXXXX`, also attached as the on-chain memo), `expires_at`, and `message_pt` ready to send.
+- `create_invoice`: `amount` (accepts `150`, `150,50`, `1.234,56`), optional `token`, `description`, `expiry_minutes`. Returns the Solana Pay URL (`url` / `qr_content`), the `reference` pubkey, a human `reference_id` (`CP-XXXXX`, also attached as the on-chain memo), `expires_at`, a signed `ticket` (when `invoice_secret` is configured), and `message_pt` ready to send.
 - `check_payment`: `reference`, `expected_amount`, `expires_at` (all from the create output). Returns `paid | pending | partial | expired`, amounts, payer, signatures, timestamps, and `message_pt`. Detection matches token-balance deltas, so plain transfers, `transferChecked` and CPI-wrapped transfers all count; partial payments across several transactions are summed.
-- `sweep_yield`: same lookup fields plus `pct`. On success returns `sweep_ready` with `unsigned_tx_base64` (a legacy-format SPL `TransferChecked`, empty signature slot, recent blockhash; sign and submit within roughly 1 to 2 minutes) and `message_pt` ("Separei 10% (15,00 USDC)...").
+- `sweep_yield`: same lookup fields plus `pct` and the invoice `ticket`. On success returns `sweep_ready` with `unsigned_tx_base64` (a legacy-format SPL `TransferChecked`, empty signature slot, recent blockhash; sign and submit within roughly 1 to 2 minutes) and `message_pt` ("Separei 10% (15,00 USDC)...").
 
 Refusals come back as a normal tool result with `success: false` and a Portuguese `message_pt` (e.g. *"Não consigo criar cobrança acima de 2.000,00 USDC. Pode diminuir o valor?"*), so the agent can relay them naturally instead of crashing the call.
 
@@ -148,7 +150,7 @@ Refusals come back as a normal tool result with `success: false` and a Portugues
 Pure payments core (`src/core/`) with no wasm dependency; the component (`src/lib.rs`) is a thin shim that injects the real RPC client (via `wasi:http`/waki), entropy and clock. That split is what makes the whole decision surface natively testable:
 
 ```bash
-cargo test           # 44 tests: money/date handling, wire format, status matrix,
+cargo test           # 51 tests: money/date handling, wire format, status matrix,
                      # and every fail-closed path against a mocked chain
 cargo clippy --all-targets
 ./scripts/package.sh # wasm32-wasip2 component + dist/ assembly
