@@ -16,6 +16,10 @@ use crate::core::money;
 pub const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 /// USDC mint on mainnet-beta.
 pub const USDC_MAINNET_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+/// System program (owner of nonce accounts).
+pub const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
+/// RecentBlockhashes sysvar, required by AdvanceNonceAccount.
+pub const RECENT_BLOCKHASHES_SYSVAR: &str = "SysvarRecentB1ockHashes11111111111111111111";
 
 /// Absolute ceiling on the sweep percentage, compiled into the plugin.
 /// Operator config can only lower it, never raise it.
@@ -62,6 +66,11 @@ pub struct Config {
     /// Secret used to sign invoice tickets (HMAC). Required for sweeps: a
     /// sweep only runs against an invoice whose ticket this plugin issued.
     pub invoice_secret: Option<String>,
+    /// Optional durable nonce account (base58) whose authority is the
+    /// recipient wallet. When set, sweep transactions are built on this nonce
+    /// with an AdvanceNonceAccount first instruction, so at most one prepared
+    /// sweep can ever confirm: the chain itself serializes them.
+    pub nonce_account: Option<String>,
     /// Max signatures scanned per reference / per daily-volume lookup.
     pub scan_limit: usize,
     /// Local timezone as UTC offset in hours. Default -3 (Brasília).
@@ -169,6 +178,15 @@ impl Config {
             .filter(|v| (-12..=14).contains(v))
             .unwrap_or(-3);
 
+        let nonce_account = match get(section, "nonce_account") {
+            Some(n) => {
+                money::validate_pubkey(n)
+                    .map_err(|_| ClawErr::config("nonce_account is not a valid base58 pubkey"))?;
+                Some(n.to_string())
+            }
+            None => None,
+        };
+
         // The ticket scheme is only as strong as this secret, and every
         // issued ticket is a known (message, MAC) pair: refuse secrets short
         // enough to brute-force offline.
@@ -203,6 +221,7 @@ impl Config {
             daily_sweep_cap: get(section, "daily_sweep_cap").unwrap_or("500").to_string(),
             yield_destination,
             invoice_secret: invoice_secret.map(str::to_string),
+            nonce_account,
             scan_limit,
             utc_offset_hours,
             label: get(section, "label").unwrap_or("ClawPay").to_string(),

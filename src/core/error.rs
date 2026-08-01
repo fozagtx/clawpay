@@ -119,6 +119,15 @@ impl ClawErr {
         )
     }
 
+    pub fn nonce_misconfigured(detail: &str) -> Self {
+        Self::new(
+            "nonce_misconfigured",
+            "A conta de nonce da reserva não está configurada corretamente. \
+             Peça ao operador para conferir a conta e a autoridade do nonce.",
+            format!("nonce account problem: {detail}"),
+        )
+    }
+
     pub fn ticket_expired() -> Self {
         Self::new(
             "ticket_expired",

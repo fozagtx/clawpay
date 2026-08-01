@@ -114,19 +114,11 @@ mod component {
         }
     }
 
-    fn entropy() -> [u8; 32] {
+    /// Fail closed if wasi:random is unavailable: a weak reference could
+    /// collide across invoices, and colliding references merge their credits.
+    fn entropy() -> Option<[u8; 32]> {
         let mut buf = [0u8; 32];
-        if getrandom::fill(&mut buf).is_ok() {
-            return buf;
-        }
-        // wasi:random should always be present; if it is not, degrade to a
-        // time-seeded hash rather than a constant reference.
-        use sha2::{Digest, Sha256};
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        Sha256::digest(nanos.to_le_bytes()).into()
+        getrandom::fill(&mut buf).ok().map(|_| buf)
     }
 
     fn now_unix() -> i64 {
@@ -184,7 +176,25 @@ mod component {
 
         fn execute(args: String) -> Result<ToolResult, String> {
             emit(PluginAction::Start, PluginOutcome::Success, "executing clawpay action", None);
-            let result = api::run(&args, &WakiChain, entropy(), now_unix());
+            let Some(entropy) = entropy() else {
+                emit(
+                    PluginAction::Fail,
+                    PluginOutcome::Failure,
+                    "wasi:random unavailable",
+                    Some("entropy_unavailable"),
+                );
+                return Ok(ToolResult {
+                    success: false,
+                    output: serde_json::json!({
+                        "status": "error",
+                        "code": "entropy_unavailable",
+                        "message_pt": "Não consegui gerar uma referência segura agora. Tente novamente.",
+                    })
+                    .to_string(),
+                    error: Some("entropy_unavailable: wasi:random returned an error".to_string()),
+                });
+            };
+            let result = api::run(&args, &WakiChain, entropy, now_unix());
             if result.success {
                 emit(PluginAction::Complete, PluginOutcome::Success, "clawpay action complete", None);
             } else {

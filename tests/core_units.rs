@@ -146,6 +146,7 @@ fn unsigned_transfer_checked_wire_layout() {
         amount_base: 15_000_000,
         decimals: 6,
         blockhash: &blockhash,
+        nonce: None,
     })
     .unwrap();
 
@@ -273,4 +274,68 @@ fn ticket_roundtrip_and_tamper_detection() {
     assert!(!verify("s3cret", &t, &common::reference(), common::USDC, 150_000_000, 1_785_603_601, &common::recipient()));
     assert!(!verify("s3cret", &t, &common::destination(), common::USDC, 150_000_000, 1_785_603_600, &common::recipient()));
     assert!(!verify("other", &t, &common::reference(), common::USDC, 150_000_000, 1_785_603_600, &common::recipient()));
+}
+
+
+#[test]
+fn unsigned_transfer_with_durable_nonce_wire_layout() {
+    use clawpay::core::config::{RECENT_BLOCKHASHES_SYSVAR, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID};
+    let owner = common::recipient();
+    let source = common::source_ata();
+    let dest = common::dest_ata();
+    let nonce_account = common::key(8);
+    let blockhash = common::blockhash();
+    let wire = build_unsigned_transfer_checked(&SweepTransfer {
+        owner: &owner,
+        source: &source,
+        destination: &dest,
+        mint: common::USDC,
+        token_program: TOKEN_PROGRAM_ID,
+        amount_base: 15_000_000,
+        decimals: 6,
+        blockhash: &blockhash,
+        nonce: Some((&nonce_account, SYSTEM_PROGRAM_ID, RECENT_BLOCKHASHES_SYSVAR)),
+    })
+    .unwrap();
+
+    assert_eq!(wire[0], 1);
+    assert!(wire[1..65].iter().all(|b| *b == 0));
+
+    let msg = &wire[65..];
+    // header: 1 signer, 0 readonly signed, 4 readonly unsigned
+    assert_eq!(&msg[0..3], &[1, 0, 4]);
+    // eight account keys: owner, source, dest, nonce, mint, token, system, sysvar
+    assert_eq!(msg[3], 8);
+    let keys = &msg[4..4 + 8 * 32];
+    assert_eq!(&keys[0..32], [1u8; 32]);
+    assert_eq!(&keys[3 * 32..4 * 32], [8u8; 32]); // nonce == key(8)
+    assert_eq!(
+        &keys[6 * 32..7 * 32],
+        bs58::decode(SYSTEM_PROGRAM_ID).into_vec().unwrap().as_slice()
+    );
+    assert_eq!(
+        &keys[7 * 32..8 * 32],
+        bs58::decode(RECENT_BLOCKHASHES_SYSVAR).into_vec().unwrap().as_slice()
+    );
+    // stored nonce blockhash in the blockhash slot
+    assert_eq!(&msg[4 + 256..4 + 288], [7u8; 32]);
+
+    // two instructions, AdvanceNonceAccount FIRST as the runtime requires
+    let instr = &msg[4 + 288..];
+    assert_eq!(instr[0], 2);
+    // ix1: system program (6), accounts [nonce, sysvar, authority] = [3, 7, 0]
+    assert_eq!(instr[1], 6);
+    assert_eq!(instr[2], 3);
+    assert_eq!(&instr[3..6], &[3, 7, 0]);
+    assert_eq!(instr[6], 4);
+    assert_eq!(&instr[7..11], &4u32.to_le_bytes());
+    // ix2: token program (5), accounts [source, mint, dest, owner] = [1, 4, 2, 0]
+    assert_eq!(instr[11], 5);
+    assert_eq!(instr[12], 4);
+    assert_eq!(&instr[13..17], &[1, 4, 2, 0]);
+    assert_eq!(instr[17], 10);
+    assert_eq!(instr[18], 12);
+    assert_eq!(&instr[19..27], &15_000_000u64.to_le_bytes());
+    assert_eq!(instr[27], 6);
+    assert_eq!(instr.len(), 28);
 }

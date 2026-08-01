@@ -715,3 +715,73 @@ fn duplicate_allowed_tokens_refused() {
     assert!(!result.success);
     assert_eq!(run_output(&result)["code"], "config_error");
 }
+
+
+// ------------------------------------------------------------ durable nonce
+
+fn nonce_chain(
+    authority: String,
+) -> MockChain<impl Fn(&str, &Value) -> Result<Value, String>> {
+    let reference = reference();
+    let recip = recipient();
+    let dest = destination();
+    let s_ata = source_ata();
+    let d_ata = dest_ata();
+    let nonce_account = key(8);
+    MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getSignaturesForAddress" if addr == reference => {
+                Ok(json!([sig_entry("paysig", NOW - 600)]))
+            }
+            "getSignaturesForAddress" if addr == d_ata => Ok(json!([])),
+            "getTransaction" if addr == "paysig" => {
+                Ok(credit_tx(&recip, USDC, 150_000_000, NOW - 600, "paysig"))
+            }
+            "getTokenAccountsByOwner" if addr == recip => {
+                Ok(json!({"value": [token_account(&s_ata, 150_000_000)]}))
+            }
+            "getTokenAccountsByOwner" if addr == dest => {
+                Ok(json!({"value": [token_account(&d_ata, 0)]}))
+            }
+            "getAccountInfo" if addr == nonce_account => Ok(json!({
+                "value": {"data": {"parsed": {"type": "initialized", "info": {
+                    "authority": authority,
+                    "blockhash": blockhash(),
+                }}}}
+            })),
+            other => Err(format!("unmocked {other}")),
+        }
+    })
+}
+
+/// With a nonce account configured, the sweep builds on the stored nonce
+/// blockhash and includes the advance instruction (8-key account table).
+#[test]
+fn sweep_with_durable_nonce() {
+    let mut cfg = sweep_config();
+    cfg.insert("nonce_account".to_string(), key(8));
+    let result = run(&args(sweep_args(10), &cfg), &nonce_chain(recipient()), ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+    let out = run_output(&result);
+    assert_eq!(out["status"], "sweep_ready");
+    assert!(out["signing_note"].as_str().unwrap().contains("nonce durável"));
+
+    use base64::Engine as _;
+    let wire = base64::engine::general_purpose::STANDARD
+        .decode(out["unsigned_tx_base64"].as_str().unwrap())
+        .unwrap();
+    let msg = &wire[65..];
+    assert_eq!(&msg[0..3], &[1, 0, 4]);
+    assert_eq!(msg[3], 8);
+}
+
+/// A nonce account whose authority is not the recipient wallet refuses.
+#[test]
+fn sweep_with_foreign_nonce_authority_refused() {
+    let mut cfg = sweep_config();
+    cfg.insert("nonce_account".to_string(), key(8));
+    let result = run(&args(sweep_args(10), &cfg), &nonce_chain(payer()), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "nonce_misconfigured");
+}

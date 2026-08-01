@@ -389,17 +389,55 @@ pub fn sweep_yield(
         .next()
         .ok_or_else(|| ClawErr::destination_has_no_account(&p.token.symbol))?;
 
-    let blockhash = chain
-        .rpc(
-            &cfg.rpc_url,
-            "getLatestBlockhash",
-            json!([{"commitment": "confirmed"}]),
-        )
-        .map_err(ClawErr::rpc)?
-        .pointer("/value/blockhash")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ClawErr::rpc("getLatestBlockhash returned no blockhash"))?
-        .to_string();
+    // With a durable nonce configured, build on the nonce's stored blockhash
+    // and advance it first: of several prepared sweeps, the chain confirms at
+    // most one. Otherwise use a recent blockhash (roughly 2 minute validity).
+    let (blockhash, nonce) = match &cfg.nonce_account {
+        Some(nonce_account) => {
+            let info = chain
+                .rpc(
+                    &cfg.rpc_url,
+                    "getAccountInfo",
+                    json!([nonce_account, {"encoding": "jsonParsed", "commitment": "confirmed"}]),
+                )
+                .map_err(ClawErr::rpc)?;
+            let parsed = info
+                .pointer("/value/data/parsed/info")
+                .ok_or_else(|| ClawErr::nonce_misconfigured("account missing or not a parsed nonce"))?;
+            let authority = parsed.get("authority").and_then(Value::as_str).unwrap_or("");
+            if authority != recipient {
+                return Err(ClawErr::nonce_misconfigured(
+                    "nonce authority is not the recipient wallet",
+                ));
+            }
+            let stored = parsed
+                .get("blockhash")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ClawErr::nonce_misconfigured("nonce has no stored blockhash"))?;
+            (
+                stored.to_string(),
+                Some((
+                    nonce_account.clone(),
+                    crate::core::config::SYSTEM_PROGRAM_ID,
+                    crate::core::config::RECENT_BLOCKHASHES_SYSVAR,
+                )),
+            )
+        }
+        None => {
+            let recent = chain
+                .rpc(
+                    &cfg.rpc_url,
+                    "getLatestBlockhash",
+                    json!([{"commitment": "confirmed"}]),
+                )
+                .map_err(ClawErr::rpc)?
+                .pointer("/value/blockhash")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ClawErr::rpc("getLatestBlockhash returned no blockhash"))?
+                .to_string();
+            (recent, None)
+        }
+    };
 
     let wire = tx::build_unsigned_transfer_checked(&tx::SweepTransfer {
         owner: &recipient,
@@ -410,7 +448,19 @@ pub fn sweep_yield(
         amount_base: sweep_base,
         decimals: d,
         blockhash: &blockhash,
+        nonce: nonce
+            .as_ref()
+            .map(|(account, system, sysvar)| (account.as_str(), *system, *sysvar)),
     })?;
+    let signing_note = if nonce.is_some() {
+        "Transação NÃO assinada (TransferChecked com nonce durável). \
+         O nonce garante que só uma reserva preparada pode ser confirmada; \
+         assine e envie quando quiser."
+    } else {
+        "Transação NÃO assinada (TransferChecked). O blockhash expira em ~1 a 2 \
+         minutos; assine e envie logo. Prepare e assine uma reserva por vez: o \
+         limite diário só conta transações já confirmadas na rede."
+    };
 
     use base64::Engine as _;
     let unsigned_tx_base64 = base64::engine::general_purpose::STANDARD.encode(wire);
@@ -429,7 +479,7 @@ pub fn sweep_yield(
         "destination_owner": destination,
         "destination_token_account": dest_account,
         "unsigned_tx_base64": unsigned_tx_base64,
-        "signing_note": "Transação NÃO assinada (TransferChecked). O blockhash expira em ~1 a 2 minutos; assine e envie logo. Prepare e assine uma reserva por vez: o limite diário só conta transações já confirmadas na rede.",
+        "signing_note": signing_note,
         "message_pt": msgs::sweep_ready(p.pct, &sweep_fmt, &p.token.symbol, &msgs::short_addr(&destination)),
     }))
 }
