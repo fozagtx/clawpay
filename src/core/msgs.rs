@@ -1,4 +1,4 @@
-//! Natural Brazilian Portuguese message templates (FR3, section 8 of the PRD).
+//! Natural Brazilian Portuguese message templates.
 //!
 //! Amounts are denominated in the invoice token (USDC by default) and
 //! formatted Brazilian-style (`1.234,56`). Converting to and displaying BRL

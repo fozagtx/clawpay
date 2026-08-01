@@ -85,7 +85,7 @@ fn resolve_recipient<'a>(cfg: &'a Config, arg: Option<&'a str>) -> Result<&'a st
 }
 
 /// Build an invoice. Pure: entropy and clock are injected by the caller.
-/// Enforces the per-invoice maximum (F6) before anything else.
+/// Enforces the per-invoice maximum before anything else.
 pub fn create(
     req: &InvoiceRequest,
     cfg: &Config,

@@ -1,6 +1,6 @@
 //! Unsigned Solana transaction serialization (legacy message format).
 //!
-//! ClawPay never holds keys and never signs (FR5): the sweep path produces a
+//! ClawPay never holds keys and never signs: the sweep path produces a
 //! wire-format transaction with an empty signature slot, base64-encoded, for
 //! the operator's own signer (wallet, hardware signer, or a host-side signing
 //! tool) to approve. Building it by hand keeps the dependency tree tiny and

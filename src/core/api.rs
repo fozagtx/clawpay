@@ -109,7 +109,7 @@ fn create_invoice(
     };
     let inv = invoice::create(&req, cfg, entropy, now_unix)?;
 
-    // Daily received-volume cap (F6): only enforced when the operator set
+    // Daily received-volume cap: only enforced when the operator set
     // one. Chain-derived so the model cannot talk its way past it; an
     // unreachable RPC therefore refuses creation rather than skipping it.
     if let Some(cap) = &cfg.daily_volume_cap {

@@ -1,6 +1,6 @@
 //! End-to-end action tests through `api::run` with a mocked chain: the same
 //! JSON-in/JSON-out surface the ZeroClaw host drives, including every
-//! fail-closed path and the Portuguese copy from the PRD.
+//! fail-closed path and the Portuguese copy.
 
 mod common;
 
@@ -24,7 +24,7 @@ fn sweep_config() -> std::collections::HashMap<String, String> {
     cfg
 }
 
-// ------------------------------------------------------------- create (F1)
+// ------------------------------------------------------------------ create
 
 #[test]
 fn create_invoice_happy_path() {
@@ -125,7 +125,7 @@ fn create_invoice_unknown_token_refused() {
     assert_eq!(run_output(&result)["code"], "token_not_allowed");
 }
 
-// --------------------------------------------- create + daily volume (F6)
+// -------------------------------------------------- create + daily volume
 
 fn volume_chain(
     todays_base: u64,
@@ -175,7 +175,7 @@ fn daily_volume_cap_fails_closed_when_rpc_is_down() {
     assert_eq!(run_output(&result)["code"], "rpc_unavailable");
 }
 
-// -------------------------------------------------- check_payment (F2/F3/F5)
+// ----------------------------------------------------------- check_payment
 
 fn check_args(expected: &str, expires_at: i64) -> Value {
     json!({
@@ -264,7 +264,7 @@ fn check_payment_rpc_down_fails_closed() {
     assert_eq!(run_output(&result)["code"], "rpc_unavailable");
 }
 
-// ------------------------------------------------------- sweep_yield (F4)
+// -------------------------------------------------------------- sweep_yield
 
 fn sweep_args(pct: u8) -> Value {
     json!({

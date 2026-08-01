@@ -2,16 +2,16 @@
 //! Brazilian informal workers and small merchants.
 //!
 //! One tool, three actions:
-//! - `create_invoice`: Solana Pay link + QR content + unique reference (F1)
+//! - `create_invoice`: Solana Pay link + QR content + unique reference
 //! - `check_payment`:  read-only on-chain detection and pt-BR confirmation
-//!   data (F2/F3/F5)
+//!   data
 //! - `sweep_yield`:    hard-capped, chain-verified, UNSIGNED transfer to a
-//!   pre-configured yield wallet (F4)
+//!   pre-configured yield wallet
 //!
 //! Custody: the plugin is read-only plus build-unsigned-transaction. It never
 //! holds key material and has no signing path; every cap (per-invoice max,
 //! daily volume, sweep percentage, daily sweep cap) is enforced inside the
-//! plugin from operator config and on-chain facts, failing closed (F6/FR5).
+//! plugin from operator config and on-chain facts, failing closed.
 //!
 //! The payments core lives in [`core`] with no wasm dependency, so it
 //! compiles and tests on the host with a plain `cargo test`; the component

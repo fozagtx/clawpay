@@ -1,4 +1,4 @@
-//! Payment detection from Solana transaction data (FR2).
+//! Payment detection from Solana transaction data.
 //!
 //! Matching is done on token-balance deltas (`preTokenBalances` /
 //! `postTokenBalances` from a `jsonParsed` `getTransaction`), not on
@@ -108,7 +108,7 @@ impl PayStatus {
     }
 }
 
-/// Status decision (FR2). Payments already received are never un-received by
+/// Status decision. Payments already received are never un-received by
 /// expiry: an expired invoice with partial money in is reported `partial`
 /// (with the expired flag set by the caller), so the merchant can follow up.
 pub fn decide(expected_base: u64, received_base: u64, now_unix: i64, expires_at: i64) -> PayStatus {

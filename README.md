@@ -40,30 +40,31 @@ Amounts are denominated in the invoice token (USDC by default) and formatted Bra
 
 ```mermaid
 sequenceDiagram
-    participant U as Usuário (WhatsApp)
-    participant A as ZeroClaw Agent
-    participant P as ClawPay plugin (WASM)
+    participant V as Vendor
+    participant A as ZeroClaw agent
+    participant P as ClawPay plugin
     participant S as Solana RPC
-    participant W as Carteira do pagador
+    participant C as Payer wallet
 
-    U->>A: "Cria uma cobrança de 150 pro Carlos"
-    A->>P: create_invoice(amount: "150")
-    Note over P: enforce max_invoice_amount<br/>recipient from operator config only
-    P-->>A: Solana Pay URL + reference + message_pt
-    A-->>U: "Pronto! Cobrança de 150,00 USDC criada..."
-    W->>S: pagador assina a transferência (reference incluída)
-    U->>A: "Já pagaram?"
-    A->>P: check_payment(reference, expected_amount, expires_at)
-    P->>S: getSignaturesForAddress(reference) + getTransaction (read-only)
-    S-->>P: token balance deltas
-    P-->>A: status paid + message_pt
-    A-->>U: "Pagamento confirmado! Você recebeu 150,00 USDC..."
-    U->>A: "Põe 10% na poupança"
-    A->>P: sweep_yield(reference, pct: 10)
-    Note over P: pct <= max_sweep_pct <= 25 (hard ceiling)<br/>daily cap verified on-chain<br/>destination from config only
-    P->>S: re-verify payment + blockhash (read-only)
-    P-->>A: UNSIGNED TransferChecked (base64) + message_pt
-    Note over A: operator's own signer approves;<br/>the plugin never signs
+    V->>A: Cria uma cobrança de 150
+    A->>P: create_invoice
+    Note over P: caps and receiving wallet<br/>come from operator config only
+    P-->>A: Solana Pay link with a unique reference
+    A-->>V: Pronto! Cobrança de 150,00 USDC criada
+    V->>C: shares the link or QR with the payer
+    C->>S: payer signs the transfer,<br/>reference key included
+    V->>A: Já pagaram?
+    A->>P: check_payment
+    P->>S: look up the reference, read-only
+    S-->>P: confirmed token transfers
+    P-->>A: status paid, reply in Portuguese
+    A-->>V: Pagamento confirmado!
+    V->>A: Põe 10% na poupança
+    A->>P: sweep_yield
+    Note over P: pct capped by config and a 25% code ceiling<br/>daily cap re-checked on-chain<br/>destination fixed in config
+    P->>S: re-verify payment, fetch blockhash
+    P-->>A: unsigned transaction, base64
+    Note over A: the operator signs elsewhere,<br/>the plugin never signs
 ```
 
 Statelessness is a design constraint of ZeroClaw tool plugins (fresh store per call), and ClawPay leans into it: the Solana Pay `reference` key **is** the invoice database. Nothing needs to be persisted; payment state is always re-derived from the chain.
@@ -120,8 +121,8 @@ All keys are optional except that **without `recipient` invoice creation refuses
 | `recipient` | (none) | Merchant wallet (base58). Invoices are payable to this address. |
 | `rpc_url` | mainnet-beta public RPC | Solana JSON-RPC endpoint. |
 | `allowed_tokens` | `USDC:EPjF…t1v:6` | Comma-separated `SYMBOL:MINT:DECIMALS`. First entry is the default token. |
-| `max_invoice_amount` | `2000` | Per-invoice cap, token units (FR1). |
-| `daily_volume_cap` | unset | Daily received-volume cap; enforced via chain scan when set (F6). |
+| `max_invoice_amount` | `2000` | Per-invoice cap, token units. |
+| `daily_volume_cap` | unset | Daily received-volume cap; enforced via chain scan when set. |
 | `default_expiry_minutes` | `60` | Invoice validity when the request doesn't specify one. |
 | `max_sweep_pct` | `0` (disabled) | Operator ceiling for sweeps; clamped to a hard 25%. |
 | `daily_sweep_cap` | `500` | Absolute daily sweep cap, token units. |
@@ -166,7 +167,3 @@ tests/               native test suite with a programmable mock chain
 scripts/package.sh   build + assemble dist/clawpay/
 wit/                 vendored ZeroClaw plugin WIT contract (v0)
 ```
-
-## Out of scope
-
-Per the PRD: direct Pix generation, KYC/banking, multi-signature escrow, cross-chain, recurring invoices, and any UI outside the agent chat.

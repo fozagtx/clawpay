@@ -115,7 +115,7 @@ pub fn token_accounts_of(
 
 /// Total base units credited to `owner` in `mint` since `since_unix`,
 /// scanning the owner's token accounts. Bounded by `scan_limit` signatures
-/// per account; used for the daily caps (F6).
+/// per account; used for the daily caps.
 pub fn received_since(
     chain: &dyn ChainClient,
     cfg: &Config,
@@ -183,7 +183,7 @@ pub struct CheckOutcome {
     pub credits: Vec<Credit>,
 }
 
-/// F2 + F5: look the invoice up on-chain and decide its status.
+/// Look the invoice up on-chain and decide its status.
 pub fn check_payment(
     chain: &dyn ChainClient,
     cfg: &Config,
@@ -200,7 +200,7 @@ pub fn check_payment(
     Ok(CheckOutcome { status, received_base, paid_at, credits })
 }
 
-/// Render a check outcome as tool output with the pt-BR message (F3).
+/// Render a check outcome as tool output with the pt-BR message.
 pub fn check_output(cfg: &Config, p: &CheckParams, out: &CheckOutcome, ref_id: &str) -> Value {
     let d = p.token.decimals;
     let symbol = &p.token.symbol;
@@ -250,7 +250,7 @@ pub struct SweepParams<'a> {
     pub now_unix: i64,
 }
 
-/// F4: prepare an UNSIGNED sweep transaction, all caps enforced fail-closed.
+/// Prepare an UNSIGNED sweep transaction, all caps enforced fail-closed.
 ///
 /// Order of checks matters and is covered by tests: configuration gates
 /// first (destination + non-zero max pct), then the requested percentage,
