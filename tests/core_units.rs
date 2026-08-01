@@ -31,6 +31,10 @@ fn rejects_bad_amounts() {
     assert!(parse_amount("abc", 6).is_err());
     assert!(parse_amount("1,2345678", 6).is_err()); // more precision than mint
     assert!(parse_amount("99999999999999999999999", 6).is_err()); // overflow
+    // mixed separators must be properly grouped, not guessed
+    assert!(parse_amount("12.34,56", 6).is_err());
+    assert!(parse_amount("1,234.56.78", 6).is_err());
+    assert!(parse_amount("1234.567,89", 6).is_err());
 }
 
 #[test]
@@ -40,6 +44,7 @@ fn formats_brazilian_style() {
     assert_eq!(format_amount(500_000, 6), "0,50");
     assert_eq!(format_amount(1_000_123, 6), "1,000123");
     assert_eq!(format_amount(0, 6), "0,00");
+    assert_eq!(format_amount(15, 1), "1,50"); // always at least two places
 }
 
 #[test]

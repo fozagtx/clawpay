@@ -68,18 +68,64 @@ pub fn credit_in_tx(tx: &Value, recipient: &str, mint: &str) -> Option<Credit> {
         .unwrap_or_default()
         .to_string();
 
-    let payer = result
-        .get("transaction")
-        .and_then(|t| t.get("message"))
-        .and_then(|m| m.get("accountKeys"))
+    // Prefer the owner whose token balance decreased (the actual sender);
+    // the fee payer is only a fallback, since relayed or exchange payments
+    // are signed by someone other than the person paying.
+    let owner_delta = |owner: &str| -> i128 {
+        let side = |key: &str| -> i128 {
+            meta.get(key)
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|e| {
+                            e.get("owner").and_then(Value::as_str) == Some(owner)
+                                && e.get("mint").and_then(Value::as_str) == Some(mint)
+                        })
+                        .filter_map(|e| {
+                            e.get("uiTokenAmount")?
+                                .get("amount")?
+                                .as_str()?
+                                .parse::<i128>()
+                                .ok()
+                        })
+                        .sum()
+                })
+                .unwrap_or(0)
+        };
+        side("postTokenBalances") - side("preTokenBalances")
+    };
+    let owners: std::collections::BTreeSet<&str> = meta
+        .get("preTokenBalances")
         .and_then(Value::as_array)
-        .and_then(|keys| {
-            keys.iter()
-                .find(|k| k.get("signer").and_then(Value::as_bool) == Some(true))
-                .and_then(|k| k.get("pubkey"))
-                .and_then(Value::as_str)
-        })
-        .map(str::to_string);
+        .into_iter()
+        .flatten()
+        .chain(
+            meta.get("postTokenBalances")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+        .filter_map(|e| e.get("owner").and_then(Value::as_str))
+        .collect();
+    let sender = owners
+        .iter()
+        .find(|o| **o != recipient && owner_delta(o) < 0)
+        .map(|o| o.to_string());
+    let payer = sender.or_else(|| {
+        result
+            .get("transaction")
+            .and_then(|t| t.get("message"))
+            .and_then(|m| m.get("accountKeys"))
+            .and_then(Value::as_array)
+            .and_then(|keys| {
+                keys.iter()
+                    .find(|k| k.get("signer").and_then(Value::as_bool) == Some(true))
+                    .and_then(|k| k.get("pubkey"))
+                    .and_then(Value::as_str)
+            })
+            .map(str::to_string)
+    });
 
     Some(Credit {
         amount_base: delta,

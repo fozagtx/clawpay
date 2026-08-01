@@ -27,21 +27,28 @@ pub fn parse_amount(input: &str, decimals: u8) -> Result<u64, ClawErr> {
     let normalized: String = match (last_dot, last_comma) {
         (Some(d), Some(c)) => {
             let (dec_sep, group_sep) = if d > c { ('.', ',') } else { (',', '.') };
-            let mut out = String::with_capacity(s.len());
-            let dec_pos = s.rfind(dec_sep).unwrap();
-            for (i, ch) in s.char_indices() {
-                if ch == group_sep {
-                    continue;
-                }
-                if ch == dec_sep {
-                    if i == dec_pos {
-                        out.push('.');
-                    }
-                    // earlier occurrences of the decimal char are grouping
-                    continue;
-                }
-                out.push(ch);
+            if s.matches(dec_sep).count() > 1 {
+                return Err(ClawErr::invalid_args(format!(
+                    "ambiguous amount `{input}`: repeated decimal separator"
+                )));
             }
+            let dec_pos = s.rfind(dec_sep).unwrap();
+            // With both separators present the prefix must be properly
+            // grouped (1-3 digits, then groups of exactly 3): `1.234,56` and
+            // `1,234.56` parse, `12.34,56` refuses instead of guessing.
+            let groups: Vec<&str> = s[..dec_pos].split(group_sep).collect();
+            let well_grouped = !groups.is_empty()
+                && (1..=3).contains(&groups[0].len())
+                && groups.iter().all(|g| g.chars().all(|ch| ch.is_ascii_digit()))
+                && groups[1..].iter().all(|g| g.len() == 3);
+            if !well_grouped {
+                return Err(ClawErr::invalid_args(format!(
+                    "ambiguous amount `{input}`: malformed thousands grouping"
+                )));
+            }
+            let mut out: String = groups.concat();
+            out.push('.');
+            out.push_str(&s[dec_pos + 1..]);
             out
         }
         _ => s.replace(',', "."),
@@ -109,6 +116,9 @@ pub fn format_amount(base: u64, decimals: u8) -> String {
     let mut frac_str = format!("{frac_part:0width$}", width = decimals as usize);
     while frac_str.len() > 2 && frac_str.ends_with('0') {
         frac_str.pop();
+    }
+    while frac_str.len() < 2 {
+        frac_str.push('0');
     }
     format!("{grouped},{frac_str}")
 }

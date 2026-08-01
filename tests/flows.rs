@@ -461,3 +461,124 @@ fn model_cannot_smuggle_config() {
     assert!(!result.success);
     assert_eq!(run_output(&result)["code"], "sweep_pct_above_limit");
 }
+
+// ------------------------------------------- fail-closed hardening regressions
+
+/// A per-item batch failure (Null slot) must refuse the lookup, never count
+/// as "paid nothing".
+#[test]
+fn per_item_batch_failure_refuses_instead_of_zero() {
+    let reference = reference();
+    let chain = MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getSignaturesForAddress" if addr == reference => {
+                Ok(json!([sig_entry("paysig", NOW - 60)]))
+            }
+            "getTransaction" => Ok(Value::Null), // simulated per-item RPC error
+            other => Err(format!("unmocked {other}")),
+        }
+    });
+    let a = args(check_args("150", NOW + 3600), &base_config());
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "rpc_unavailable");
+}
+
+/// Daily-cap scans must paginate: credits beyond the first signature page
+/// still count against the cap.
+#[test]
+fn daily_volume_cap_sees_past_first_signature_page() {
+    let mut cfg = base_config();
+    cfg.insert("daily_volume_cap".to_string(), "2000".to_string());
+    cfg.insert("scan_limit".to_string(), "2".to_string());
+    let recip = recipient();
+    let ata = source_ata();
+    // Page 1: two zero-credit txs today (full page). Page 2: the 1.900 credit.
+    let chain = MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getTokenAccountsByOwner" if addr == recip => {
+                Ok(json!({"value": [token_account(&ata, 0)]}))
+            }
+            "getSignaturesForAddress" if addr == ata => {
+                let before = params
+                    .get(1)
+                    .and_then(|o| o.get("before"))
+                    .and_then(Value::as_str);
+                match before {
+                    None => Ok(json!([sig_entry("s1", NOW - 10), sig_entry("s2", NOW - 20)])),
+                    Some("s2") => Ok(json!([sig_entry("s3", NOW - 30)])),
+                    other => Err(format!("unexpected before {other:?}")),
+                }
+            }
+            "getTransaction" if addr == "s3" => {
+                Ok(credit_tx(&recip, USDC, 1_900_000_000, NOW - 30, "s3"))
+            }
+            "getTransaction" => Ok(credit_tx(&recip, USDC, 0, NOW - 10, addr)),
+            other => Err(format!("unmocked {other}")),
+        }
+    });
+    let a = args(json!({"action": "create_invoice", "amount": "150"}), &cfg);
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success, "1.900 on page 2 must still trip the 2.000 cap");
+    assert_eq!(run_output(&result)["code"], "daily_limit_reached");
+}
+
+/// When pagination never leaves the time window, the scan fails closed
+/// instead of undercounting.
+#[test]
+fn exhausted_scan_window_refuses() {
+    let mut cfg = base_config();
+    cfg.insert("daily_volume_cap".to_string(), "2000".to_string());
+    cfg.insert("scan_limit".to_string(), "1".to_string());
+    let recip = recipient();
+    let ata = source_ata();
+    let chain = MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getTokenAccountsByOwner" if addr == recip => {
+                Ok(json!({"value": [token_account(&ata, 0)]}))
+            }
+            // Always a full page, always inside today's window.
+            "getSignaturesForAddress" if addr == ata => {
+                let before = params
+                    .get(1)
+                    .and_then(|o| o.get("before"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("s0");
+                Ok(json!([sig_entry(&format!("{before}x"), NOW - 60)]))
+            }
+            other => Err(format!("unmocked {other}")),
+        }
+    });
+    let a = args(json!({"action": "create_invoice", "amount": "150"}), &cfg);
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "scan_window_exhausted");
+}
+
+/// Model-supplied expiry is clamped to one week, never overflowing.
+#[test]
+fn expiry_minutes_is_clamped() {
+    let a = args(
+        json!({"action": "create_invoice", "amount": "10", "expiry_minutes": u64::MAX}),
+        &base_config(),
+    );
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+    let out = run_output(&result);
+    assert_eq!(out["expires_at"], json!(NOW + 7 * 24 * 3600));
+}
+
+/// A self-sweep configuration is refused at config time.
+#[test]
+fn yield_destination_equal_to_recipient_refused() {
+    let mut cfg = base_config();
+    cfg.insert("yield_destination".to_string(), recipient());
+    cfg.insert("max_sweep_pct".to_string(), "10".to_string());
+    let a = args(json!({"action": "create_invoice", "amount": "10"}), &cfg);
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "config_error");
+}

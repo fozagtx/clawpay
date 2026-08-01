@@ -88,6 +88,7 @@ Every limit is enforced **inside the plugin**, from operator config plus on-chai
 - **Sweep only after confirmed payment**: the sweep re-verifies the invoice on-chain and sizes itself from the chain-verified received amount, never from what the model claims.
 - **Yield destination is config-only**: there is deliberately no runtime parameter for it. Same for the receiving wallet: invoice `recipient` overrides are rejected unless the operator explicitly enables them, so a prompt-injected agent cannot redirect money.
 - The model-facing schema never exposes `__config`; the ZeroClaw host additionally strips any caller-supplied `__config` before injection.
+- **The caps, not the invoice reference, are the enforcement boundary.** The `reference` argument scopes which credits a sweep looks at, but a stateless plugin cannot bind one sweep to one invoice; the percentage ceiling, the chain-verified daily cap and the config-locked destination are what bound funds movement. Because the daily cap only counts transactions already confirmed on-chain, prepare and sign one sweep at a time.
 
 ## Install
 
@@ -103,14 +104,12 @@ zeroclaw plugin list                      # should show clawpay 0.1.0
 Then configure it (values are stored encrypted under the plugin's own config section and injected as `__config`; the plugin never reads env vars or global config):
 
 ```bash
-zeroclaw config set plugins.entries.clawpay.recipient "<merchant wallet pubkey>"
-zeroclaw config set plugins.entries.clawpay.rpc_url "https://api.mainnet-beta.solana.com"
+zeroclaw config set plugins.entries.clawpay.config.recipient "<merchant wallet pubkey>"
+zeroclaw config set plugins.entries.clawpay.config.rpc_url "https://api.mainnet-beta.solana.com"
 # optional micro-savings:
-zeroclaw config set plugins.entries.clawpay.yield_destination "<yield wallet pubkey>"
-zeroclaw config set plugins.entries.clawpay.max_sweep_pct "15"
+zeroclaw config set plugins.entries.clawpay.config.yield_destination "<yield wallet pubkey>"
+zeroclaw config set plugins.entries.clawpay.config.max_sweep_pct "15"
 ```
-
-*(If your host version stores plugin config under a different key path, use the equivalent `zeroclaw config set` path for the `clawpay` section; the keys below are the contract.)*
 
 ## Configuration
 
@@ -149,7 +148,7 @@ Refusals come back as a normal tool result with `success: false` and a Portugues
 Pure payments core (`src/core/`) with no wasm dependency; the component (`src/lib.rs`) is a thin shim that injects the real RPC client (via `wasi:http`/waki), entropy and clock. That split is what makes the whole decision surface natively testable:
 
 ```bash
-cargo test           # 39 tests: money/date handling, wire format, status matrix,
+cargo test           # 44 tests: money/date handling, wire format, status matrix,
                      # and every fail-closed path against a mocked chain
 cargo clippy --all-targets
 ./scripts/package.sh # wasm32-wasip2 component + dist/ assembly

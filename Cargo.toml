@@ -3,7 +3,7 @@ name = "clawpay"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "ZeroClaw WIT tool plugin: Solana Pay stablecoin invoices for Brazilian informal workers — create, watch and confirm payments in Portuguese, with hard-capped optional yield sweeps."
+description = "ZeroClaw WIT tool plugin: Solana Pay stablecoin invoices for Brazilian informal workers. Create, watch and confirm payments in Portuguese, with hard-capped optional yield sweeps."
 publish = false
 
 # cdylib for the wasm component; rlib so the pure payments core is testable

@@ -100,6 +100,15 @@ impl ClawErr {
         )
     }
 
+    pub fn scan_exhausted() -> Self {
+        Self::new(
+            "scan_window_exhausted",
+            "Há movimentações demais nesta conta para eu verificar com segurança agora. \
+             Tente novamente em instantes.",
+            "signature pagination exhausted MAX_SCAN_PAGES while entries were still in the window",
+        )
+    }
+
     pub fn sweep_disabled() -> Self {
         Self::new(
             "sweep_disabled",

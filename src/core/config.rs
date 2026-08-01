@@ -130,6 +130,14 @@ impl Config {
             None => None,
         };
 
+        if let (Some(r), Some(y)) = (&recipient, &yield_destination) {
+            if r == y {
+                return Err(ClawErr::config(
+                    "yield_destination must differ from recipient (a self-sweep builds an invalid transaction)",
+                ));
+            }
+        }
+
         let max_sweep_pct = get(section, "max_sweep_pct")
             .map(|v| {
                 v.parse::<u8>()

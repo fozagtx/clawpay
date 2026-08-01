@@ -111,9 +111,12 @@ pub fn create(
     let reference = bs58::encode(entropy).into_string();
     let reference_id = reference_id(&reference);
 
+    // Clamp to the same one-week bound as the operator default: the argument
+    // comes from the model and must not overflow the timestamp arithmetic.
     let expiry_minutes = req
         .expiry_minutes
         .filter(|m| *m > 0)
+        .map(|m| m.min(60 * 24 * 7))
         .unwrap_or(cfg.default_expiry_minutes);
     let expires_at = now_unix + (expiry_minutes as i64) * 60;
 
