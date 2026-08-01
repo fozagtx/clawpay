@@ -121,11 +121,13 @@ mod component {
         getrandom::fill(&mut buf).ok().map(|_| buf)
     }
 
-    fn now_unix() -> i64 {
+    /// Fail closed if the wall clock is unavailable: expiry, ticket grace and
+    /// the daily-cap midnights all depend on real time.
+    fn now_unix() -> Option<i64> {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
+            .ok()
             .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
     }
 
     fn emit(action: PluginAction, outcome: PluginOutcome, message: &str, code: Option<&str>) {
@@ -176,25 +178,34 @@ mod component {
 
         fn execute(args: String) -> Result<ToolResult, String> {
             emit(PluginAction::Start, PluginOutcome::Success, "executing clawpay action", None);
-            let Some(entropy) = entropy() else {
-                emit(
-                    PluginAction::Fail,
-                    PluginOutcome::Failure,
-                    "wasi:random unavailable",
-                    Some("entropy_unavailable"),
-                );
-                return Ok(ToolResult {
+            let refuse = |code: &str, message_pt: &str, detail: &str| {
+                emit(PluginAction::Fail, PluginOutcome::Failure, detail, Some(code));
+                Ok(ToolResult {
                     success: false,
                     output: serde_json::json!({
                         "status": "error",
-                        "code": "entropy_unavailable",
-                        "message_pt": "Não consegui gerar uma referência segura agora. Tente novamente.",
+                        "code": code,
+                        "message_pt": message_pt,
                     })
                     .to_string(),
-                    error: Some("entropy_unavailable: wasi:random returned an error".to_string()),
-                });
+                    error: Some(format!("{code}: {detail}")),
+                })
             };
-            let result = api::run(&args, &WakiChain, entropy, now_unix());
+            let Some(entropy) = entropy() else {
+                return refuse(
+                    "entropy_unavailable",
+                    "Não consegui gerar uma referência segura agora. Tente novamente.",
+                    "wasi:random returned an error",
+                );
+            };
+            let Some(now) = now_unix() else {
+                return refuse(
+                    "clock_unavailable",
+                    "Não consegui consultar o relógio do sistema agora. Tente novamente.",
+                    "wall clock before unix epoch or unavailable",
+                );
+            };
+            let result = api::run(&args, &WakiChain, entropy, now);
             if result.success {
                 emit(PluginAction::Complete, PluginOutcome::Success, "clawpay action complete", None);
             } else {

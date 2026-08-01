@@ -182,6 +182,11 @@ impl Config {
             Some(n) => {
                 money::validate_pubkey(n)
                     .map_err(|_| ClawErr::config("nonce_account is not a valid base58 pubkey"))?;
+                if Some(n) == recipient.as_deref() || Some(n) == yield_destination.as_deref() {
+                    return Err(ClawErr::config(
+                        "nonce_account must be its own account, not the recipient or yield destination",
+                    ));
+                }
                 Some(n.to_string())
             }
             None => None,

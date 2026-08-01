@@ -745,7 +745,7 @@ fn nonce_chain(
                 Ok(json!({"value": [token_account(&d_ata, 0)]}))
             }
             "getAccountInfo" if addr == nonce_account => Ok(json!({
-                "value": {"data": {"parsed": {"type": "initialized", "info": {
+                "value": {"data": {"program": "nonce", "parsed": {"type": "initialized", "info": {
                     "authority": authority,
                     "blockhash": blockhash(),
                 }}}}
@@ -784,4 +784,45 @@ fn sweep_with_foreign_nonce_authority_refused() {
     let result = run(&args(sweep_args(10), &cfg), &nonce_chain(payer()), ENTROPY, NOW);
     assert!(!result.success);
     assert_eq!(run_output(&result)["code"], "nonce_misconfigured");
+}
+
+
+/// An account that is not an initialized nonce refuses, even with
+/// authority-shaped and blockhash-shaped fields present.
+#[test]
+fn sweep_with_non_nonce_account_refused() {
+    let mut cfg = sweep_config();
+    cfg.insert("nonce_account".to_string(), key(8));
+    let nonce_account = key(8);
+    let chain = MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getSignaturesForAddress" => Ok(json!([sig_entry("paysig", NOW - 600)])),
+            "getTransaction" => Ok(credit_tx(&recipient(), USDC, 150_000_000, NOW - 600, "paysig")),
+            "getTokenAccountsByOwner" if addr == recipient() => {
+                Ok(json!({"value": [token_account(&source_ata(), 150_000_000)]}))
+            }
+            "getTokenAccountsByOwner" => Ok(json!({"value": [token_account(&dest_ata(), 0)]})),
+            "getAccountInfo" if addr == nonce_account => Ok(json!({
+                "value": {"data": {"program": "spl-token", "parsed": {"type": "account", "info": {
+                    "authority": recipient(),
+                    "blockhash": blockhash(),
+                }}}}
+            })),
+            other => Err(format!("unmocked {other}")),
+        }
+    });
+    let result = run(&args(sweep_args(10), &cfg), &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "nonce_misconfigured");
+}
+
+/// The nonce account must be its own account, not another configured wallet.
+#[test]
+fn nonce_account_colliding_with_recipient_refused() {
+    let mut cfg = sweep_config();
+    cfg.insert("nonce_account".to_string(), recipient());
+    let result = run(&args(sweep_args(10), &cfg), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "config_error");
 }

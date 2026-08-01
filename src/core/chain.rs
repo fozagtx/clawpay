@@ -401,6 +401,14 @@ pub fn sweep_yield(
                     json!([nonce_account, {"encoding": "jsonParsed", "commitment": "confirmed"}]),
                 )
                 .map_err(ClawErr::rpc)?;
+            if info.pointer("/value/data/program").and_then(Value::as_str) != Some("nonce")
+                || info.pointer("/value/data/parsed/type").and_then(Value::as_str)
+                    != Some("initialized")
+            {
+                return Err(ClawErr::nonce_misconfigured(
+                    "account is not an initialized nonce account",
+                ));
+            }
             let parsed = info
                 .pointer("/value/data/parsed/info")
                 .ok_or_else(|| ClawErr::nonce_misconfigured("account missing or not a parsed nonce"))?;
