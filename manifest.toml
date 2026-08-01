@@ -1,0 +1,14 @@
+name = "clawpay"
+version = "0.1.0"
+description = "Solana Pay stablecoin invoices for Brazilian informal workers: create invoices, detect and confirm payments (read-only RPC), and prepare hard-capped UNSIGNED yield-sweep transactions. Custody tier: read-only + build-unsigned; this plugin never holds keys and never signs."
+author = "ClawPay"
+wasm_path = "clawpay.wasm"
+capabilities = ["tool"]
+# config_read: the host injects this plugin's own config section (recipient,
+# rpc_url, limits, yield destination, allowed tokens) into execute args as
+# `__config`. Every safety cap and the sweep destination live there — the
+# model cannot supply or override them.
+# http_client: outbound Solana JSON-RPC (payment detection, balance lookups,
+# recent blockhash). create_invoice works without network unless a daily
+# volume cap is configured.
+permissions = ["config_read", "http_client"]

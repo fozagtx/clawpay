@@ -1,0 +1,463 @@
+//! End-to-end action tests through `api::run` with a mocked chain: the same
+//! JSON-in/JSON-out surface the ZeroClaw host drives, including every
+//! fail-closed path and the Portuguese copy from the PRD.
+
+mod common;
+
+use common::*;
+use serde_json::{json, Value};
+
+use clawpay::core::api::run;
+
+const ENTROPY: [u8; 32] = [9u8; 32];
+
+fn args(mut body: Value, config: &std::collections::HashMap<String, String>) -> String {
+    body["__config"] = json!(config);
+    body.to_string()
+}
+
+fn sweep_config() -> std::collections::HashMap<String, String> {
+    let mut cfg = base_config();
+    cfg.insert("yield_destination".to_string(), destination());
+    cfg.insert("max_sweep_pct".to_string(), "20".to_string());
+    cfg.insert("daily_sweep_cap".to_string(), "500".to_string());
+    cfg
+}
+
+// ------------------------------------------------------------- create (F1)
+
+#[test]
+fn create_invoice_happy_path() {
+    let a = args(
+        json!({"action": "create_invoice", "amount": "150", "description": "Almoço"}),
+        &base_config(),
+    );
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+    let out = run_output(&result);
+
+    assert_eq!(out["status"], "created");
+    assert_eq!(out["token"], "USDC");
+    assert_eq!(out["amount"], "150");
+    assert_eq!(out["expires_at"], json!(NOW + 3600));
+    let url = out["url"].as_str().unwrap();
+    assert!(url.starts_with(&format!("solana:{}?amount=150&spl-token={}", recipient(), USDC)));
+    assert!(url.contains(&format!("reference={}", out["reference"].as_str().unwrap())));
+    assert!(url.contains("message=Almo%C3%A7o"));
+    assert!(url.contains("label=ClawPay"));
+    let ref_id = out["reference_id"].as_str().unwrap();
+    assert!(ref_id.starts_with("CP-") && ref_id.len() == 8);
+    assert!(url.contains(&format!("memo={ref_id}")));
+    assert_eq!(out["qr_content"], out["url"]);
+
+    let msg = out["message_pt"].as_str().unwrap();
+    assert!(msg.contains("Cobrança de 150,00 USDC criada"));
+    assert!(msg.contains(&format!("Referência: {ref_id}")));
+    assert!(msg.contains("Válida até"));
+}
+
+#[test]
+fn create_invoice_expiry_and_comma_amount() {
+    let a = args(
+        json!({"action": "create_invoice", "amount": "1.234,56", "expiry_minutes": 10}),
+        &base_config(),
+    );
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(result.success);
+    let out = run_output(&result);
+    assert_eq!(out["amount"], "1234.56");
+    assert_eq!(out["amount_formatted"], "1.234,56");
+    assert_eq!(out["expires_at"], json!(NOW + 600));
+}
+
+#[test]
+fn create_invoice_distinct_entropy_distinct_reference() {
+    let a = args(json!({"action": "create_invoice", "amount": "10"}), &base_config());
+    let first = run_output(&run(&a, &no_chain(), [1u8; 32], NOW));
+    let second = run_output(&run(&a, &no_chain(), [2u8; 32], NOW));
+    assert_ne!(first["reference"], second["reference"]);
+    assert_ne!(first["reference_id"], second["reference_id"]);
+}
+
+#[test]
+fn create_invoice_above_max_fails_closed() {
+    let a = args(json!({"action": "create_invoice", "amount": "2000,01"}), &base_config());
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    let out = run_output(&result);
+    assert_eq!(out["code"], "amount_above_limit");
+    assert!(out["message_pt"]
+        .as_str()
+        .unwrap()
+        .contains("Não consigo criar cobrança acima de 2.000,00 USDC"));
+}
+
+#[test]
+fn create_invoice_recipient_override_refused() {
+    let a = args(
+        json!({"action": "create_invoice", "amount": "10", "recipient": destination()}),
+        &base_config(),
+    );
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "recipient_override_forbidden");
+}
+
+#[test]
+fn create_invoice_without_recipient_config_fails_closed() {
+    let a = args(
+        json!({"action": "create_invoice", "amount": "10"}),
+        &std::collections::HashMap::new(),
+    );
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "recipient_not_configured");
+}
+
+#[test]
+fn create_invoice_unknown_token_refused() {
+    let a = args(
+        json!({"action": "create_invoice", "amount": "10", "token": "DOGE"}),
+        &base_config(),
+    );
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "token_not_allowed");
+}
+
+// --------------------------------------------- create + daily volume (F6)
+
+fn volume_chain(
+    todays_base: u64,
+) -> MockChain<impl Fn(&str, &Value) -> Result<Value, String>> {
+    let recip = recipient();
+    let ata = source_ata();
+    MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getTokenAccountsByOwner" if addr == recip => {
+                Ok(json!({"value": [token_account(&ata, 0)]}))
+            }
+            "getSignaturesForAddress" if addr == ata => {
+                Ok(json!([sig_entry("daysig", NOW - 120)]))
+            }
+            "getTransaction" => Ok(credit_tx(&recip, USDC, todays_base, NOW - 120, "daysig")),
+            other => Err(format!("unmocked {other}")),
+        }
+    })
+}
+
+#[test]
+fn daily_volume_cap_blocks_creation() {
+    let mut cfg = base_config();
+    cfg.insert("daily_volume_cap".to_string(), "2000".to_string());
+    let a = args(json!({"action": "create_invoice", "amount": "150"}), &cfg);
+
+    // 1.900 already received today + 150 > 2.000 -> refuse
+    let result = run(&a, &volume_chain(1_900_000_000), ENTROPY, NOW);
+    assert!(!result.success);
+    let out = run_output(&result);
+    assert_eq!(out["code"], "daily_limit_reached");
+    assert!(out["message_pt"].as_str().unwrap().contains("limite diário"));
+
+    // 1.000 received today + 150 fits
+    let result = run(&a, &volume_chain(1_000_000_000), ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+}
+
+#[test]
+fn daily_volume_cap_fails_closed_when_rpc_is_down() {
+    let mut cfg = base_config();
+    cfg.insert("daily_volume_cap".to_string(), "2000".to_string());
+    let a = args(json!({"action": "create_invoice", "amount": "150"}), &cfg);
+    let result = run(&a, &dead_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "rpc_unavailable");
+}
+
+// -------------------------------------------------- check_payment (F2/F3/F5)
+
+fn check_args(expected: &str, expires_at: i64) -> Value {
+    json!({
+        "action": "check_payment",
+        "reference": reference(),
+        "expected_amount": expected,
+        "expires_at": expires_at,
+    })
+}
+
+/// Chain with `credits` (amount, blocktime) paid against the reference.
+fn paid_chain(
+    credits: Vec<(u64, i64)>,
+) -> MockChain<impl Fn(&str, &Value) -> Result<Value, String>> {
+    let reference = reference();
+    let recip = recipient();
+    MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getSignaturesForAddress" if addr == reference => Ok(Value::Array(
+                credits
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, bt))| sig_entry(&format!("sig{i}"), *bt))
+                    .collect(),
+            )),
+            "getTransaction" => {
+                let sig = addr;
+                let idx: usize = sig.trim_start_matches("sig").parse().unwrap();
+                let (amount, bt) = credits[idx];
+                Ok(credit_tx(&recip, USDC, amount, bt, sig))
+            }
+            other => Err(format!("unmocked {other}")),
+        }
+    })
+}
+
+#[test]
+fn check_payment_paid() {
+    let a = args(check_args("150", NOW + 3600), &base_config());
+    let result = run(&a, &paid_chain(vec![(150_000_000, NOW - 60)]), ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+    let out = run_output(&result);
+    assert_eq!(out["status"], "paid");
+    assert_eq!(out["received_amount"], "150");
+    assert_eq!(out["paid_at"], json!(NOW - 60));
+    assert_eq!(out["payer"], json!(payer()));
+    let msg = out["message_pt"].as_str().unwrap();
+    assert!(msg.contains("Pagamento confirmado!"));
+    assert!(msg.contains("Você recebeu 150,00 USDC"));
+    assert!(msg.contains("Obrigado!"));
+}
+
+#[test]
+fn check_payment_pending_and_expired() {
+    let empty = || paid_chain(vec![]);
+
+    let a = args(check_args("150", NOW + 3600), &base_config());
+    let out = run_output(&run(&a, &empty(), ENTROPY, NOW));
+    assert_eq!(out["status"], "pending");
+    assert!(out["message_pt"].as_str().unwrap().contains("Ainda não recebi o pagamento"));
+
+    let a = args(check_args("150", NOW - 10), &base_config());
+    let out = run_output(&run(&a, &empty(), ENTROPY, NOW));
+    assert_eq!(out["status"], "expired");
+    assert!(out["message_pt"].as_str().unwrap().contains("expirou sem pagamento"));
+}
+
+#[test]
+fn check_payment_partial_sums_multiple_credits() {
+    let a = args(check_args("150", NOW + 3600), &base_config());
+    let chain = paid_chain(vec![(60_000_000, NOW - 300), (40_000_000, NOW - 200)]);
+    let out = run_output(&run(&a, &chain, ENTROPY, NOW));
+    assert_eq!(out["status"], "partial");
+    assert_eq!(out["received_amount"], "100");
+    let msg = out["message_pt"].as_str().unwrap();
+    assert!(msg.contains("Recebi apenas 100,00 USDC da cobrança de 150,00 USDC"));
+    assert!(msg.contains("Faltam 50,00 USDC"));
+}
+
+#[test]
+fn check_payment_rpc_down_fails_closed() {
+    let a = args(check_args("150", NOW + 3600), &base_config());
+    let result = run(&a, &dead_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "rpc_unavailable");
+}
+
+// ------------------------------------------------------- sweep_yield (F4)
+
+fn sweep_args(pct: u8) -> Value {
+    json!({
+        "action": "sweep_yield",
+        "reference": reference(),
+        "expected_amount": "150",
+        "expires_at": NOW + 3600,
+        "pct": pct,
+    })
+}
+
+/// Fully wired sweep chain: payment of 150 USDC confirmed, `dest_today`
+/// already received by the destination today, `source_balance` in the
+/// merchant's token account.
+fn sweep_chain(
+    dest_today: Option<(u64, i64)>,
+    source_balance: u64,
+    dest_has_account: bool,
+) -> MockChain<impl Fn(&str, &Value) -> Result<Value, String>> {
+    let reference = reference();
+    let recip = recipient();
+    let dest = destination();
+    let s_ata = source_ata();
+    let d_ata = dest_ata();
+    let bh = blockhash();
+    MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getSignaturesForAddress" if addr == reference => {
+                Ok(json!([sig_entry("paysig", NOW - 600)]))
+            }
+            "getSignaturesForAddress" if addr == d_ata => match dest_today {
+                Some((_, bt)) => Ok(json!([sig_entry("destsig", bt)])),
+                None => Ok(json!([])),
+            },
+            "getTransaction" if addr == "paysig" => {
+                Ok(credit_tx(&recip, USDC, 150_000_000, NOW - 600, "paysig"))
+            }
+            "getTransaction" if addr == "destsig" => {
+                let (amount, bt) = dest_today.unwrap();
+                Ok(credit_tx(&dest, USDC, amount, bt, "destsig"))
+            }
+            "getTokenAccountsByOwner" if addr == recip => {
+                Ok(json!({"value": [token_account(&s_ata, source_balance)]}))
+            }
+            "getTokenAccountsByOwner" if addr == dest => {
+                if dest_has_account {
+                    Ok(json!({"value": [token_account(&d_ata, 0)]}))
+                } else {
+                    Ok(json!({"value": []}))
+                }
+            }
+            "getLatestBlockhash" => Ok(json!({"value": {"blockhash": bh}})),
+            other => Err(format!("unmocked {other}")),
+        }
+    })
+}
+
+#[test]
+fn sweep_happy_path_builds_unsigned_tx() {
+    let a = args(sweep_args(10), &sweep_config());
+    let chain = sweep_chain(None, 150_000_000, true);
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+    let out = run_output(&result);
+
+    assert_eq!(out["status"], "sweep_ready");
+    assert_eq!(out["sweep_amount"], "15");
+    assert_eq!(out["pct"], 10);
+    assert_eq!(out["destination_owner"], json!(destination()));
+    assert_eq!(out["source_token_account"], json!(source_ata()));
+
+    use base64::Engine as _;
+    let wire = base64::engine::general_purpose::STANDARD
+        .decode(out["unsigned_tx_base64"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(wire[0], 1);
+    assert!(wire[1..65].iter().all(|b| *b == 0), "signature slot must be empty");
+
+    let msg = out["message_pt"].as_str().unwrap();
+    assert!(msg.contains("Separei 10% (15,00 USDC)"));
+    assert!(msg.contains("reserva de rendimento"));
+}
+
+#[test]
+fn sweep_refused_when_disabled() {
+    // No yield_destination / max_sweep_pct in config.
+    let a = args(sweep_args(10), &base_config());
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "sweep_disabled");
+}
+
+#[test]
+fn sweep_pct_above_operator_cap_refused() {
+    let a = args(sweep_args(21), &sweep_config());
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    let out = run_output(&result);
+    assert_eq!(out["code"], "sweep_pct_above_limit");
+    assert!(out["message_pt"].as_str().unwrap().contains("até 20%"));
+}
+
+#[test]
+fn sweep_before_payment_refused() {
+    let reference = reference();
+    let chain = MockChain(move |method, params| {
+        let addr = params.get(0).and_then(Value::as_str).unwrap_or("");
+        match method {
+            "getSignaturesForAddress" if addr == reference => Ok(json!([])),
+            other => Err(format!("unmocked {other}")),
+        }
+    });
+    let a = args(sweep_args(10), &sweep_config());
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    let out = run_output(&result);
+    assert_eq!(out["code"], "invoice_not_paid");
+    assert!(out["message_pt"].as_str().unwrap().contains("ainda não foi paga"));
+}
+
+#[test]
+fn sweep_daily_cap_enforced_from_chain() {
+    // Destination already received 495 USDC today; sweeping 15 would breach
+    // the 500 cap -> refuse and tell how much still fits.
+    let a = args(sweep_args(10), &sweep_config());
+    let chain = sweep_chain(Some((495_000_000, NOW - 400)), 150_000_000, true);
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    let out = run_output(&result);
+    assert_eq!(out["code"], "sweep_daily_cap_reached");
+    assert!(out["message_pt"].as_str().unwrap().contains("5,00 USDC"));
+}
+
+#[test]
+fn sweep_daily_cap_ignores_yesterday() {
+    // 495 received BEFORE local midnight must not count.
+    let yesterday = clawpay::core::time::local_midnight(NOW, -3) - 100;
+    let a = args(sweep_args(10), &sweep_config());
+    let chain = sweep_chain(Some((495_000_000, yesterday)), 150_000_000, true);
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(result.success, "error: {:?}", result.error);
+}
+
+#[test]
+fn sweep_insufficient_source_balance_refused() {
+    let a = args(sweep_args(10), &sweep_config());
+    let chain = sweep_chain(None, 10_000_000, true); // only 10 USDC left
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "insufficient_balance");
+}
+
+#[test]
+fn sweep_missing_destination_account_refused() {
+    let a = args(sweep_args(10), &sweep_config());
+    let chain = sweep_chain(None, 150_000_000, false);
+    let result = run(&a, &chain, ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "destination_token_account_missing");
+}
+
+#[test]
+fn sweep_rpc_down_fails_closed() {
+    let a = args(sweep_args(10), &sweep_config());
+    let result = run(&a, &dead_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "rpc_unavailable");
+}
+
+// ------------------------------------------------------------- dispatch
+
+#[test]
+fn unknown_action_and_bad_json_refused() {
+    let a = args(json!({"action": "transfer_everything"}), &base_config());
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "invalid_arguments");
+
+    let result = run("not json", &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "invalid_arguments");
+}
+
+#[test]
+fn model_cannot_smuggle_config() {
+    // Even if a `__config` object appears in the arguments (the host strips
+    // it in production), it only configures — it cannot enable sweeps beyond
+    // the hard ceiling.
+    let mut cfg = sweep_config();
+    cfg.insert("max_sweep_pct".to_string(), "90".to_string());
+    let a = args(sweep_args(30), &cfg);
+    let result = run(&a, &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "sweep_pct_above_limit");
+}
