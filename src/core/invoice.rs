@@ -5,7 +5,7 @@
 //! encoded as a base58 pubkey and appended (by the payer's wallet, per the
 //! Solana Pay spec) to the transfer transaction's account keys, which makes
 //! the payment discoverable later via `getSignaturesForAddress(reference)`.
-//! ClawPay itself keeps no state between calls — the chain is the database.
+//! ClawPay itself keeps no state between calls; the chain is the database.
 
 use sha2::{Digest, Sha256};
 

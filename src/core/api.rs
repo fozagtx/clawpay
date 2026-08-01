@@ -1,8 +1,8 @@
 //! Tool-facing API: argument parsing and action dispatch.
 //!
 //! This is the whole surface the wasm glue calls. It is pure aside from the
-//! injected [`ChainClient`], entropy, and clock, so every action — including
-//! its Portuguese output — is exercised by native `cargo test`.
+//! injected [`ChainClient`], entropy, and clock, so every action, including
+//! its Portuguese output, is exercised by native `cargo test`.
 
 use std::collections::HashMap;
 
@@ -214,7 +214,7 @@ pub fn parameters_schema() -> String {
             },
             "recipient": {
                 "type": "string",
-                "description": "create_invoice only: receiving wallet override (base58). Usually omit — the operator-configured wallet is used and overrides are rejected unless the operator enabled them."
+                "description": "create_invoice only: receiving wallet override (base58). Usually omit: the operator-configured wallet is used and overrides are rejected unless the operator enabled them."
             },
             "description": {
                 "type": "string",

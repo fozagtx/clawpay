@@ -452,7 +452,7 @@ fn unknown_action_and_bad_json_refused() {
 #[test]
 fn model_cannot_smuggle_config() {
     // Even if a `__config` object appears in the arguments (the host strips
-    // it in production), it only configures — it cannot enable sweeps beyond
+    // it in production), it only configures; it cannot enable sweeps beyond
     // the hard ceiling.
     let mut cfg = sweep_config();
     cfg.insert("max_sweep_pct".to_string(), "90".to_string());

@@ -95,7 +95,7 @@ impl ClawErr {
         Self::new(
             "rpc_unavailable",
             "Não consegui consultar a rede Solana agora. \
-             Vou tentar de novo em instantes — pode repetir o comando daqui a pouco?",
+             Vou tentar de novo em instantes. Pode repetir o comando daqui a pouco?",
             detail,
         )
     }

@@ -1,11 +1,11 @@
-//! ClawPay — a ZeroClaw WIT tool plugin: Solana Pay stablecoin invoices for
+//! ClawPay, a ZeroClaw WIT tool plugin: Solana Pay stablecoin invoices for
 //! Brazilian informal workers and small merchants.
 //!
 //! One tool, three actions:
-//! - `create_invoice` — Solana Pay link + QR content + unique reference (F1)
-//! - `check_payment`  — read-only on-chain detection and pt-BR confirmation
+//! - `create_invoice`: Solana Pay link + QR content + unique reference (F1)
+//! - `check_payment`:  read-only on-chain detection and pt-BR confirmation
 //!   data (F2/F3/F5)
-//! - `sweep_yield`    — hard-capped, chain-verified, UNSIGNED transfer to a
+//! - `sweep_yield`:    hard-capped, chain-verified, UNSIGNED transfer to a
 //!   pre-configured yield wallet (F4)
 //!
 //! Custody: the plugin is read-only plus build-unsigned-transaction. It never

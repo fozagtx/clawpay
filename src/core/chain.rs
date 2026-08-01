@@ -4,7 +4,7 @@
 //!
 //! Statelessness rule: the plugin trusts only (a) operator config and (b)
 //! what the chain says. Amounts the model passes in are used to *describe*
-//! the invoice being checked, never to size a sweep — the sweep base is
+//! the invoice being checked, never to size a sweep; the sweep base is
 //! always re-derived from on-chain credits.
 
 use serde_json::{json, Value};
@@ -299,7 +299,7 @@ pub fn sweep_yield(
     }
 
     // Chain-verified daily cap: everything that arrived at the destination
-    // today counts against it. Deliberately conservative — inbound from other
+    // today counts against it. Deliberately conservative: inbound from other
     // sources also counts, which can only make the cap tighter, never looser.
     let cap_base = money::parse_amount(&cfg.daily_sweep_cap, d)
         .map_err(|_| ClawErr::config("daily_sweep_cap is not a valid amount"))?;

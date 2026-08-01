@@ -12,7 +12,7 @@ use crate::core::error::ClawErr;
 /// `1.234,56`, `1,234.56`. When both separators appear, the last one is the
 /// decimal separator and the other is treated as thousands grouping. A single
 /// separator is always treated as the decimal separator (so `1.234` is one
-/// point two three four, not one thousand — amounts here are small).
+/// point two three four, not one thousand; amounts here are small).
 pub fn parse_amount(input: &str, decimals: u8) -> Result<u64, ClawErr> {
     let s: String = input.trim().chars().filter(|c| !c.is_whitespace()).collect();
     if s.is_empty() {

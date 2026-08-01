@@ -2,7 +2,7 @@
 //!
 //! Amounts are denominated in the invoice token (USDC by default) and
 //! formatted Brazilian-style (`1.234,56`). Converting to and displaying BRL
-//! is the agent's job — the plugin never invents an exchange rate.
+//! is the agent's job; the plugin never invents an exchange rate.
 
 pub fn created(amount: &str, symbol: &str, url: &str, ref_id: &str, valid_until: &str) -> String {
     format!(
@@ -48,8 +48,8 @@ pub fn status_paid(ref_id: &str, when: &str) -> String {
 pub fn sweep_ready(pct: u8, amount: &str, symbol: &str, destination_short: &str) -> String {
     format!(
         "Separei {pct}% ({amount} {symbol}) para sua reserva de rendimento, como combinado.\n\
-         A transação está pronta e vai para a carteira {destination_short} — \
-         falta só a assinatura do titular."
+         A transação está pronta e vai para a carteira {destination_short}. \
+         Falta só a assinatura do titular."
     )
 }
 

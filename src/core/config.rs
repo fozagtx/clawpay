@@ -5,7 +5,7 @@
 //! safe: no recipient means invoice creation refuses, no yield destination
 //! means sweeps refuse, and every cap starts at its most conservative value.
 //! Nothing in this struct can be supplied or overridden by the model at
-//! runtime — the host strips any caller-provided `__config` before injection.
+//! runtime; the host strips any caller-provided `__config` before injection.
 
 use std::collections::HashMap;
 
