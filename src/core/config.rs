@@ -100,6 +100,15 @@ fn parse_tokens(raw: &str) -> Result<Vec<TokenDef>, ClawErr> {
     if out.is_empty() {
         return Err(ClawErr::config("allowed_tokens resolved to an empty list"));
     }
+    for i in 0..out.len() {
+        for later in &out[i + 1..] {
+            if out[i].symbol == later.symbol || out[i].mint == later.mint {
+                return Err(ClawErr::config(
+                    "allowed_tokens has a duplicate symbol or mint; tickets and caps would be ambiguous",
+                ));
+            }
+        }
+    }
     Ok(out)
 }
 
@@ -160,6 +169,16 @@ impl Config {
             .filter(|v| (-12..=14).contains(v))
             .unwrap_or(-3);
 
+        // The ticket scheme is only as strong as this secret, and every
+        // issued ticket is a known (message, MAC) pair: refuse secrets short
+        // enough to brute-force offline.
+        let invoice_secret = get(section, "invoice_secret");
+        if let Some(secret) = invoice_secret {
+            if secret.len() < 16 {
+                return Err(ClawErr::config("invoice_secret must be at least 16 characters"));
+            }
+        }
+
         let default_expiry_minutes = get(section, "default_expiry_minutes")
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|v| *v > 0)
@@ -183,7 +202,7 @@ impl Config {
             max_sweep_pct,
             daily_sweep_cap: get(section, "daily_sweep_cap").unwrap_or("500").to_string(),
             yield_destination,
-            invoice_secret: get(section, "invoice_secret").map(str::to_string),
+            invoice_secret: invoice_secret.map(str::to_string),
             scan_limit,
             utc_offset_hours,
             label: get(section, "label").unwrap_or("ClawPay").to_string(),

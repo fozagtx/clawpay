@@ -30,6 +30,9 @@ const TX_BATCH: usize = 10;
 /// `scan_limit` signatures per address. Exhausting it while entries are still
 /// inside the time window refuses the operation instead of undercounting.
 const MAX_SCAN_PAGES: usize = 8;
+/// How long after invoice expiry a ticket still authorizes a sweep. Bounds
+/// replay of old paid invoices without racing genuinely late sweeps.
+const SWEEP_GRACE_SECS: i64 = 24 * 3600;
 
 fn tx_params(signature: &str) -> Value {
     json!([signature, {
@@ -60,7 +63,10 @@ fn signatures_since(
         let page = chain
             .rpc(&cfg.rpc_url, "getSignaturesForAddress", json!([address, opts]))
             .map_err(ClawErr::rpc)?;
-        let entries = page.as_array().cloned().unwrap_or_default();
+        let entries = page
+            .as_array()
+            .cloned()
+            .ok_or_else(|| ClawErr::rpc("signatures result is not an array"))?;
         for e in &entries {
             if let (Some(since), Some(t)) = (since, e.get("blockTime").and_then(Value::as_i64)) {
                 if t < since {
@@ -82,7 +88,7 @@ fn signatures_since(
             .and_then(Value::as_str)
             .map(str::to_string);
         if before.is_none() {
-            return Ok(out);
+            return Err(ClawErr::rpc("full signatures page without a usable cursor"));
         }
     }
     Err(ClawErr::scan_exhausted())
@@ -323,6 +329,9 @@ pub fn sweep_yield(
         &recipient,
     ) {
         return Err(ClawErr::invalid_ticket());
+    }
+    if p.now_unix > p.expires_at.saturating_add(SWEEP_GRACE_SECS) {
+        return Err(ClawErr::ticket_expired());
     }
 
     let ref_id = crate::core::invoice::reference_id(p.reference);

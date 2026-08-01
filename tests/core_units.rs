@@ -22,6 +22,7 @@ fn parses_plain_and_brazilian_amounts() {
     assert_eq!(parse_amount("1,234.56", 6).unwrap(), 1_234_560_000);
     assert_eq!(parse_amount("0,50", 6).unwrap(), 500_000);
     assert_eq!(parse_amount(" 2 000 ", 6).unwrap(), 2_000_000_000);
+    assert_eq!(parse_amount("1.234.567,89", 6).unwrap(), 1_234_567_890_000);
 }
 
 #[test]
@@ -247,6 +248,19 @@ fn hex_decode(s: &str) -> Vec<u8> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
         .collect()
+}
+
+#[test]
+fn hmac_sha256_matches_rfc4231_case_6_long_key() {
+    let key = vec![0xaau8; 131];
+    let mac = clawpay::core::ticket::hmac_sha256(
+        &key,
+        b"Test Using Larger Than Block-Size Key - Hash Key First",
+    );
+    assert_eq!(
+        mac.to_vec(),
+        hex_decode("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
+    );
 }
 
 #[test]

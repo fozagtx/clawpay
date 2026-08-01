@@ -70,7 +70,8 @@ pub fn credit_in_tx(tx: &Value, recipient: &str, mint: &str) -> Option<Credit> {
 
     // Prefer the owner whose token balance decreased (the actual sender);
     // the fee payer is only a fallback, since relayed or exchange payments
-    // are signed by someone other than the person paying.
+    // are signed by someone other than the person paying. Best-effort
+    // reporting only: routed payments may surface an intermediate owner.
     let owner_delta = |owner: &str| -> i128 {
         let side = |key: &str| -> i128 {
             meta.get(key)

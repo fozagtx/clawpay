@@ -668,3 +668,50 @@ fn create_without_secret_has_no_ticket() {
     let out = run_output(&run(&a, &no_chain(), ENTROPY, NOW));
     assert!(out["ticket"].is_null());
 }
+
+
+/// A ticket ages out one day after the invoice expires: no indefinite
+/// re-sweeping of an old paid invoice.
+#[test]
+fn sweep_long_after_expiry_refused() {
+    let expires = NOW - 2 * 24 * 3600;
+    let a = json!({
+        "action": "sweep_yield",
+        "reference": reference(),
+        "expected_amount": "150",
+        "expires_at": expires,
+        "pct": 10,
+        "ticket": clawpay::core::ticket::make(SECRET, &reference(), USDC, 150_000_000, expires, &recipient()),
+    });
+    let result = run(&args(a, &sweep_config()), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "ticket_expired");
+}
+
+/// Brute-forceable secrets are refused at config time.
+#[test]
+fn short_invoice_secret_refused() {
+    let mut cfg = sweep_config();
+    cfg.insert("invoice_secret".to_string(), "short".to_string());
+    let result = run(&args(sweep_args(10), &cfg), &no_chain(), ENTROPY, NOW);
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "config_error");
+}
+
+/// Duplicate symbols or mints in allowed_tokens are ambiguous and refused.
+#[test]
+fn duplicate_allowed_tokens_refused() {
+    let mut cfg = base_config();
+    cfg.insert(
+        "allowed_tokens".to_string(),
+        format!("USDC:{USDC}:6,USDX:{USDC}:9"),
+    );
+    let result = run(
+        &args(json!({"action": "create_invoice", "amount": "10"}), &cfg),
+        &no_chain(),
+        ENTROPY,
+        NOW,
+    );
+    assert!(!result.success);
+    assert_eq!(run_output(&result)["code"], "config_error");
+}

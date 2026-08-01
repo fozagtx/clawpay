@@ -119,6 +119,15 @@ impl ClawErr {
         )
     }
 
+    pub fn ticket_expired() -> Self {
+        Self::new(
+            "ticket_expired",
+            "Essa cobrança expirou há mais de um dia, então não preparo mais \
+             reservas para ela. Crie uma cobrança nova se precisar.",
+            "sweep requested more than SWEEP_GRACE_SECS after invoice expiry",
+        )
+    }
+
     pub fn invalid_ticket() -> Self {
         Self::new(
             "invalid_ticket",

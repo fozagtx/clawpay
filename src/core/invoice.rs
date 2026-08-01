@@ -150,16 +150,22 @@ impl Invoice {
         let valid_until = time::format_deadline_pt(self.expires_at, cfg.utc_offset_hours);
         // The ticket binds this exact invoice to any later sweep; without a
         // configured secret sweeps are disabled and no ticket is issued.
-        let ticket = cfg.invoice_secret.as_deref().map(|secret| {
-            crate::core::ticket::make(
-                secret,
-                &self.reference,
-                &self.token.mint,
-                self.amount_base,
-                self.expires_at,
-                &self.recipient,
-            )
-        });
+        // Sweep verification always recomputes against the CONFIGURED
+        // recipient, so invoices created for an override recipient get no
+        // ticket: they are receivable but deliberately unsweepable.
+        let ticket = match (cfg.invoice_secret.as_deref(), cfg.recipient.as_deref()) {
+            (Some(secret), Some(configured)) if configured == self.recipient => {
+                Some(crate::core::ticket::make(
+                    secret,
+                    &self.reference,
+                    &self.token.mint,
+                    self.amount_base,
+                    self.expires_at,
+                    &self.recipient,
+                ))
+            }
+            _ => None,
+        };
         serde_json::json!({
             "ticket": ticket,
             "status": "created",
